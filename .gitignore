@@ -1,0 +1,28 @@
+# Outputs (102 GB de checkpoints y GGUFs, se regeneran con scripts)
+outputs/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Large binary files
+*.bin
+*.gguf
+
+# Conda
+.env
+.conda/
