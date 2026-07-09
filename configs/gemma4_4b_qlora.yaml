@@ -1,0 +1,107 @@
+# =============================================================================
+# GEMMA 4 E4B - Configuración de Fine-Tuning QLoRA con Unsloth
+# Modelo: unsloth/gemma-4-E4B-it
+# Hardware: NVIDIA RTX 5080 (16GB VRAM)
+# Técnica: QLoRA 4-bit + Unsloth (60% menos VRAM, 1.5x más rápido)
+# =============================================================================
+
+# --- Modelo Base ---
+model:
+  name_or_path: "unsloth/gemma-4-E4B-it"
+  # Nota: Usar versión completa (no GGUF) para entrenamiento
+  # GGUF es solo para inferencia: unsloth/gemma-4-E4B-it-qat-GGUF
+  quantization_config:
+    load_in_4bit: true
+    bnb_4bit_quant_type: "nf4"
+    bnb_4bit_compute_dtype: "float16"
+    bnb_4bit_use_double_quant: true
+  trust_remote_code: true
+
+# --- Chat Template ---
+chat_template:
+  # "gemma-4" = sin thinking mode (recomendado para niños)
+  # "gemma-4-thinking" = con thinking mode (no recomendado para niños)
+  template: "gemma-4"
+  enable_thinking: false
+
+# --- Dataset ---
+dataset:
+  # Ruta al dataset formateado para entrenamiento
+  train_split: "train"
+  # Formato de las columnas del dataset
+  text_column: "text"
+  # Formato de conversación (role/content dicts)
+  format: "conversations"
+
+# --- Parámetros de Entrenamiento (SFT) ---
+training:
+  # Hyperparameters de LoRA (Unsloth recommendation: r=8, alpha=8)
+  lora:
+    r: 8                      # Rank de adaptación (Unsloth recomienda 8)
+    lora_alpha: 8             # Escala de LoRA (alpha == r recomendado)
+    lora_dropout: 0.05        # Dropout para regularización
+    target_modules:           # Capas objetivo en Gemma 4
+      - "q_proj"
+      - "k_proj"
+      - "v_proj"
+      - "o_proj"
+      - "gate_proj"
+      - "up_proj"
+      - "down_proj"
+    task_type: "CAUSAL_LM"
+  
+  # Parámetros de entrenamiento
+  output_dir: "./outputs/gemma4_4b_sft"
+  num_train_epochs: 3
+  per_device_train_batch_size: 2        # Batch por GPU (ajustar según VRAM)
+  gradient_accumulation_steps: 8        # Acumulación para batch efectivo de 16
+  learning_rate: 1.0e-4                 # Learning rate (reducido para estabilidad)
+  lr_scheduler_type: "cosine"           # Scheduler coseno
+  warmup_ratio: 0.05                    # 5% warmup
+  weight_decay: 0.01
+  max_grad_norm: 0.5                    # Clip para prevenir gradient explosion
+  bf16: true                            # Mixed precision (RTX 5080 soporta bf16 nativo)
+  dataloader_num_workers: 4
+  seed: 42
+  
+  # Optimización de memoria
+  gradient_checkpointing: true          # Activar para reducir VRAM
+  max_seq_length: 2048                  # Longitud máxima de secuencia
+  
+  # Logging y guardado
+  logging_steps: 10
+  save_steps: 100
+  save_total_limit: 3
+  eval_steps: 100
+  evaluation_strategy: "steps"
+
+# --- Notas Importantes ---
+notes:
+  # LOSS 13-15 ES NORMAL para Gemma 4 multimodal
+  # NO es colapso del modelo, es un quirk de modelos multimodales
+  # Si ves loss > 100, probablemente es un bug de gradient accumulation
+  loss_normal_range: "13-15"
+  
+  # use_cache=True es CRÍTICO para E2B/E4B
+  # Sin esto, el modelo produce garbage logits
+  use_cache: true
+  
+  # VRAM estimado: ~10 GB con Unsloth QLoRA (vs ~15 GB sin optimizaciones)
+  vram_estimated: "10 GB"
+
+# --- Inferencia (Post-Entrenamiento) ---
+inference:
+  # Parámetros para generación
+  generation:
+    max_new_tokens: 512
+    temperature: 0.7
+    top_p: 0.9
+    repetition_penalty: 1.1
+    do_sample: true
+    use_cache: true  # CRÍTICO para E2B/E4B
+  
+  # Filtro de seguridad en tiempo real
+  real_time_filter:
+    enabled: true
+    model: "guardrails"
+    safety_model: "meta-llama/Llama-Guard-7b"

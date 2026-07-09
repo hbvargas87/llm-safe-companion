@@ -1,6 +1,7 @@
 # 📝 CHANGELOG - LLM Safe Companion
 
 > Registro cronológico de cambios. Combinar con `PROJECT_CONTEXT.md` para contexto completo.
+
 ---
 
 ## 2025-07-16
@@ -208,5 +209,30 @@
 
 ---
 
-*Próxima actualización: al completar el entrenamiento o al identificar nuevos hitos*
+## 2025-07-17
 
+### Repositorio GitHub — Primer Commit ✅
+
+- 🎉 **Repositorio creado en GitHub:** https://github.com/hbvargas87/llm-safe-companion
+- 📦 **Primer commit realizado:** 28 archivos, ~17,400 líneas
+- 🗑️ **Limpieza exhaustiva:**
+  - 25 archivos de debug eliminados
+  - 19 datasets intermedios eliminados
+  - 2 directorios vacíos eliminados (notebooks/, security/)
+  - `docs/` limpiado (solo queda TONE_REWRITE_PROMPT_TEMPLATE.md)
+- ✅ **Documentación creada:**
+  - `README.md` — Descripción, arquitectura, dataset, instalación y uso
+  - `CHANGELOG.md` — Registro cronológico de cambios
+  - `PROJECT_CONTEXT.md` — Contexto permanente del proyecto
+  - `LICENSE` — MIT License
+- ✅ **`.gitignore` creado** — Excluye `outputs/` (102 GB), `__pycache__/`, etc.
+- ✅ **Pipeline de Gemma 4 E4B creada:**
+  - `scripts/gemma4_train.py` — Entrenamiento SFT con Unsloth + QLoRA
+  - `configs/gemma4_4b_qlora.yaml` — Configuración optimizada (r=8, alpha=8)
+  - `scripts/gemma4_export.py` — Exportación a GGUF (Q4_K_M / Q5_K_M / Q8_0)
+  - `scripts/verify_adapter_gemma4.py` — Verificación de adapter limpio
+- **Estado:** Repositorio público listo, pipeline Gemma 4 E4B documentada
+
+---
+
+*Próxima actualización: al completar el entrenamiento de Gemma 4 E4B o al identificar nuevos hitos*
