@@ -4,6 +4,70 @@
 
 ---
 
+## 2026-07-17
+
+### Repositorio GitHub — Primer Commit ✅
+
+- 🎉 **Repositorio creado en GitHub:** https://github.com/hbvargas87/llm-safe-companion
+- 📦 **Primer commit realizado:** 28 archivos, ~17,400 líneas
+- 🗑️ **Limpieza exhaustiva:**
+  - 25 archivos de debug eliminados
+  - 19 datasets intermedios eliminados
+  - 2 directorios vacíos eliminados (notebooks/, security/)
+  - `docs/` limpiado (solo queda TONE_REWRITE_PROMPT_TEMPLATE.md)
+- ✅ **Documentación creada:**
+  - `README.md` — Descripción, arquitectura, dataset, instalación y uso
+  - `CHANGELOG.md` — Registro cronológico de cambios
+  - `PROJECT_CONTEXT.md` — Contexto permanente del proyecto
+  - `LICENSE` — MIT License
+- ✅ **`.gitignore` creado** — Excluye `outputs/` (102 GB), `__pycache__/`, etc.
+- ✅ **Pipeline de Gemma 4 E4B creada:**
+  - `scripts/gemma4_train.py` — Entrenamiento SFT con Unsloth + QLoRA
+  - `configs/gemma4_4b_qlora.yaml` — Configuración optimizada (r=8, alpha=8)
+  - `scripts/gemma4_export.py` — Exportación a GGUF (Q4_K_M / Q5_K_M / Q8_0)
+  - `scripts/verify_adapter_gemma4.py` — Verificación de adapter limpio
+- **Estado:** Repositorio público listo, pipeline Gemma 4 E4B documentada
+
+---
+
+## 2026-07-17 - Fase 7: Gemma 4 E4B Pipeline (SFT + DPO completado)
+
+### Completado
+- **SFT Gemma 4 E4B:**
+  - Loss final: 3.6288, mean_token_accuracy: 81.68%
+  - Tiempo: 4h 00min, 2334 steps, VRAM peak: 21.3 GB reserved / 12.3 GB used
+  - Modelo: `outputs/gemma4_4b_sft/final/`
+  - LoRA: r=16, alpha=16, all-linear
+  - Dataset: `kidsafe_tone_dataset.jsonl` (12,435 muestras)
+
+- **DPO Gemma 4 E4B:**
+  - Loss final: 0.5472 (reducción desde 0.9934, ~45%)
+  - Tiempo: ~25 min, 1800 steps, VRAM peak: ~9.3 GB
+  - Adapter: `outputs/gemma4_4b_dpo/final/`
+  - LoRA: r=8, alpha=8, beta=0.1
+  - Dataset: `dpo_dataset.jsonl` (200 pares, 10 categorías)
+### Corregido
+- **Bug crítico en `apply_chat_template`:** indentación incorrecta causaba `TypeError: string indices must be integers`
+- **Bug en DPO LoRA conflict:** `FastLanguageModel.from_pretrained(sft_dir)` cargaba LoRA SFT → `get_peft_model()` explotaba
+  - Solución: Cargar base + aplicar SFT adapter en memoria + merge in-memory (no guardar a disco)
+- **Bug en dataset duplicado:** `chosen`/`rejected` existían 2x en schema → `KeyError`
+  - Solución: `remove_columns` antes de `rename_columns`
+- **Bug en merge 4-bit corrupto:** `merge_and_unload()` produce safetensors corruptos (q_proj weight shape `[2621440, 1]`)
+  - Solución: Nunca guardar modelo merged a disco, solo in-memory
+- **Bug en `config.json` corrupto:** dimensiones anidadas en `text_config` en vez de top-level
+  - Solución: Fix en `merge_sft_gemma4.py`
+
+### Agregado
+- `scripts/merge_sft_gemma4.py` - Merge SFT adapter en base model (para referencia)
+- Pipeline completo documentado: SFT → DPO → GGUF export
+
+### Próximos pasos
+- [ ] GGUF export con `scripts/gemma4_export.py`
+- [ ] Testing en LM Studio
+- [ ] WebApp development (Hito 1)
+
+---
+
 ## 2025-07-16
 
 ### Fase 6: Alineación de Seguridad con DPO — COMPLETADA ✅
@@ -206,32 +270,6 @@
 - **Fase 4:** ✅ Completada - Verificación pre-entrenamiento
 - **Fase 5:** 🔄 En progreso - Fine-tuning base con Qwen2-7B + QLoRA + reescritura de tono
 - **Fases 6-9:** ⬜ Pendientes
-
----
-
-## 2025-07-17
-
-### Repositorio GitHub — Primer Commit ✅
-
-- 🎉 **Repositorio creado en GitHub:** https://github.com/hbvargas87/llm-safe-companion
-- 📦 **Primer commit realizado:** 28 archivos, ~17,400 líneas
-- 🗑️ **Limpieza exhaustiva:**
-  - 25 archivos de debug eliminados
-  - 19 datasets intermedios eliminados
-  - 2 directorios vacíos eliminados (notebooks/, security/)
-  - `docs/` limpiado (solo queda TONE_REWRITE_PROMPT_TEMPLATE.md)
-- ✅ **Documentación creada:**
-  - `README.md` — Descripción, arquitectura, dataset, instalación y uso
-  - `CHANGELOG.md` — Registro cronológico de cambios
-  - `PROJECT_CONTEXT.md` — Contexto permanente del proyecto
-  - `LICENSE` — MIT License
-- ✅ **`.gitignore` creado** — Excluye `outputs/` (102 GB), `__pycache__/`, etc.
-- ✅ **Pipeline de Gemma 4 E4B creada:**
-  - `scripts/gemma4_train.py` — Entrenamiento SFT con Unsloth + QLoRA
-  - `configs/gemma4_4b_qlora.yaml` — Configuración optimizada (r=8, alpha=8)
-  - `scripts/gemma4_export.py` — Exportación a GGUF (Q4_K_M / Q5_K_M / Q8_0)
-  - `scripts/verify_adapter_gemma4.py` — Verificación de adapter limpio
-- **Estado:** Repositorio público listo, pipeline Gemma 4 E4B documentada
 
 ---
 
