@@ -16,7 +16,7 @@ El modelo resultante niega amablemente las preguntas peligrosas y redirige a tem
 |---|---|---|
 | **SFT** | QLoRA (4-bit NF4) via TRL 1.6.0 | QLoRA (4-bit) via Unsloth + TRL 1.6.0 |
 | **DPO** | TRL 1.6.0 `DPOTrainer` + `DPOConfig` | TRL 1.6.0 `DPOTrainer` + `DPOConfig` |
-| **Exportación** | GGUF Q4_K_M (~4.9 GB) ✅ | GGUF Export pendiente |
+| **Exportación** | GGUF Q4_K_M (~4.9 GB) ✅ | GGUF Q4_K_M (~3.5 GB) ✅ (Unsloth nativo) |
 | **Vocabulario** | ~152K tokens | 262K tokens (mejor tokenización español) |
 | **Multimodal** | Solo texto | Texto + Imagen + Audio |
 | **Chat Template** | Qwen2 custom | gemma-4 (sin thinking) |
@@ -25,7 +25,7 @@ El modelo resultante niega amablemente las preguntas peligrosas y redirige a tem
 
 **Estado:**
 - ✅ **Qwen2-7B-Instruct:** SFT + DPO + GGUF exportado y verificado en LM Studio
-- ✅ **Gemma 4 E4B:** SFT + DPO completados, GGUF export pendiente
+- ✅ **Gemma 4 E4B:** SFT + DPO + GGUF exportado (Unsloth nativo, sin llama.cpp)
 - ⬜ **WebApp:** En progreso (ver [Sirius](https://bitbucket.org/HumberDJ/sirius/src/test/))
 
 ## 💻 Hardware
@@ -89,7 +89,8 @@ llm-safe-companion/
 │   ├── verify_adapter.py            # Verifica adapter Qwen2 limpio
 │   ├── gemma4_train.py              # Entrenamiento SFT Gemma 4
 │   ├── gemma4_train_dpo.py          # Entrenamiento DPO Gemma 4
-│   ├── gemma4_export.py             # Exportación GGUF Gemma 4
+│   ├── gemma4_merge_and_export.py   # Merge SFT+DPO + GGUF nativo Unsloth ✅
+│   ├── gemma4_export.py             # Exportación GGUF Gemma 4 (llama.cpp, no usar)
 │   ├── verify_adapter_gemma4.py     # Verifica adapter Gemma 4 limpio
 │   └── [datasets scripts...]        # Procesamiento de datos
 ├── outputs/
@@ -106,6 +107,7 @@ llm-safe-companion/
 
 **Excluido por `.gitignore`:**
 - `outputs/` — Checkpoints y GGUFs (~102 GB, se regeneran con los scripts de exportación)
+- `merged/` — Checkpoints fusionados (generados por merge_and_export)
 - `__pycache__/`, `.ipynb_checkpoints/`
 
 ## 🚀 Instalación y Uso
@@ -154,9 +156,13 @@ python scripts/gemma4_train.py
 python scripts/gemma4_train_dpo.py
 ```
 
-**Exportar a GGUF:**
+**Exportar a GGUF (Gemma 4 E4B):**
 ```bash
-python scripts/gemma4_export.py
+# Merge SFT + DPO en BF16 y exportar a GGUF (nativo Unsloth)
+python scripts/gemma4_merge_and_export.py --out merged/gemma4-E4B-kidsafe --gguf --quant q4_k_m
+
+# Solo merge sin GGUF
+python scripts/gemma4_merge_and_export.py --out merged/gemma4-E4B-kidsafe
 ```
 
 ### Verificación del Adapter

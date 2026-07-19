@@ -1,6 +1,12 @@
 # Outputs (102 GB de checkpoints y GGUFs, se regeneran con scripts)
 outputs/
 
+# Merged checkpoints (generados por merge_and_export)
+merged/
+
+# Unsloth compiled cache (regenerables)
+unsloth_compiled_cache/
+
 # Python
 __pycache__/
 *.py[cod]
@@ -26,3 +32,4 @@ Thumbs.db
 # Conda
 .env
 .conda/
+
