@@ -3,6 +3,7 @@
 # Modelo: unsloth/gemma-4-E4B-it
 # Hardware: NVIDIA RTX 5080 (16GB VRAM)
 # Técnica: QLoRA 4-bit + Unsloth (60% menos VRAM, 1.5x más rápido)
+# Basado en: https://unsloth.ai/docs/models/gemma-4/train (notebook oficial)
 # =============================================================================
 
 # --- Modelo Base ---
@@ -26,48 +27,46 @@ chat_template:
 
 # --- Dataset ---
 dataset:
-  # Ruta al dataset formateado para entrenamiento
   train_split: "train"
-  # Formato de las columnas del dataset
   text_column: "text"
-  # Formato de conversación (role/content dicts)
   format: "conversations"
 
 # --- Parámetros de Entrenamiento (SFT) ---
 training:
-  # Hyperparameters de LoRA (Unsloth recommendation: r=8, alpha=8)
+  # Hyperparameters de LoRA
+  # Compromiso entre r=8 (conservador) y r=32 (notebook oficial)
+  # r=16, alpha=16 ofrece buena calidad con VRAM manejable
   lora:
-    r: 8                      # Rank de adaptación (Unsloth recomienda 8)
-    lora_alpha: 8             # Escala de LoRA (alpha == r recomendado)
-    lora_dropout: 0.05        # Dropout para regularización
-    target_modules:           # Capas objetivo en Gemma 4
-      - "q_proj"
-      - "k_proj"
-      - "v_proj"
-      - "o_proj"
-      - "gate_proj"
-      - "up_proj"
-      - "down_proj"
+    r: 16                     # Rank de adaptación (compromiso: 8-32)
+    lora_alpha: 16            # alpha == r recomendado por Unsloth
+    lora_dropout: 0
+    target_modules: "all-linear"  # Todas las capas lineales (notebook oficial)
+    use_rslora: false         # Rank-Stabilized LoRA (opcional)
+    loftq_config: null        # LoftQ (opcional)
     task_type: "CAUSAL_LM"
   
+  # Capas a fine-tunear (solo texto, sin visión)
+  finetune_vision_layers: false
+  finetune_language_layers: true
+  finetune_attention_modules: true
+  finetune_mlp_modules: true
+
   # Parámetros de entrenamiento
   output_dir: "./outputs/gemma4_4b_sft"
   num_train_epochs: 3
-  per_device_train_batch_size: 2        # Batch por GPU (ajustar según VRAM)
-  gradient_accumulation_steps: 8        # Acumulación para batch efectivo de 16
-  learning_rate: 1.0e-4                 # Learning rate (reducido para estabilidad)
-  lr_scheduler_type: "cosine"           # Scheduler coseno
-  warmup_ratio: 0.05                    # 5% warmup
-  weight_decay: 0.01
-  max_grad_norm: 0.5                    # Clip para prevenir gradient explosion
+  per_device_train_batch_size: 4        # Optimizado: más throughput
+  gradient_accumulation_steps: 4        # Batch efectivo: 4 x 4 = 16
+  learning_rate: 2.0e-4                 # Learning rate (notebook oficial)
+  lr_scheduler_type: "cosine"           # Scheduler coseno (notebook oficial)
+  warmup_ratio: 0.03                    # 3% warmup (notebook oficial)
+  weight_decay: 0.001
+  max_grad_norm: 0.3                    # Gradient clipping (notebook oficial)
   bf16: true                            # Mixed precision (RTX 5080 soporta bf16 nativo)
-  dataloader_num_workers: 4
-  seed: 42
-  
-  # Optimización de memoria
-  gradient_checkpointing: true          # Activar para reducir VRAM
-  max_seq_length: 2048                  # Longitud máxima de secuencia
-  
+  dataloader_num_workers: 2             # 2 workers para paralelismo ligero
+  seed: 3407                            # Seed del notebook oficial
+  # Optimización de memoria — CRÍTICO PARA VELOCIDAD
+  gradient_checkpointing: false         # ❌ Desactivado: causa 30-50x más lento
+  max_seq_length: 512                   # Reducido de 1024: 4x menos tokens por iter
   # Logging y guardado
   logging_steps: 10
   save_steps: 100
@@ -86,22 +85,23 @@ notes:
   # Sin esto, el modelo produce garbage logits
   use_cache: true
   
-  # VRAM estimado: ~10 GB con Unsloth QLoRA (vs ~15 GB sin optimizaciones)
-  vram_estimated: "10 GB"
+  # VRAM estimado: ~8-10 GB con QLoRA 4-bit (r=16, all-linear, seq=1024)
+  # RTX 5080 16GB es más que suficiente con esta configuración
+  # Sin gradient_checkpointing + seq_length reducido = mucho más rápido
+  vram_estimated: "8-10 GB"
 
 # --- Inferencia (Post-Entrenamiento) ---
 inference:
-  # Parámetros para generación
   generation:
     max_new_tokens: 512
-    temperature: 0.7
-    top_p: 0.9
-    repetition_penalty: 1.1
+    temperature: 1.0                    # Temperatura recomendada por Gemma
+    top_p: 0.95                         # top_p recomendado por Gemma
+    top_k: 64                           # top_k recomendado por Gemma
     do_sample: true
     use_cache: true  # CRÍTICO para E2B/E4B
   
-  # Filtro de seguridad en tiempo real
   real_time_filter:
     enabled: true
     model: "guardrails"
     safety_model: "meta-llama/Llama-Guard-7b"
+

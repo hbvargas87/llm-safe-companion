@@ -1,14 +1,20 @@
-"""Merge Gemma 4 E4B SFT adapter with base model and export to GGUF.
+"""Merge Gemma 4 E4B SFT + DPO adapters and export to GGUF.
 
 Flow:
     1. Load base gemma-4-E4B-it
-    2. Merge SFT adapter → model with child-friendly tone
-    3. Convert merged model to GGUF fp16
-    4. Quantize to Q4_K_M / Q5_K_M / Q8_0
+    2. Apply SFT adapter (child-friendly tone) as LoRA
+    3. Merge SFT LoRA into base (in-memory, no save)
+    4. Apply DPO adapter (safety alignment) as LoRA
+    5. Merge DPO LoRA into base (in-memory, no save)
+    6. Convert directly to GGUF fp16 (no intermediate save)
+    7. Quantize to Q4_K_M / Q5_K_M / Q8_0
+
+IMPORTANT: Do NOT save merged model to disk — 4-bit merge corrupts safetensors.
 
 Usage:
-    conda activate kid-ai
     python scripts/gemma4_export.py --step all --quant q4_k_m
+    python scripts/gemma4_export.py --step all --quant q5_k_m
+    python scripts/gemma4_export.py --step all --quant q8_0
 """
 
 import os
@@ -23,13 +29,13 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 BASE_MODEL = "unsloth/gemma-4-E4B-it"
 SFT_ADAPTER = PROJECT_ROOT / "outputs" / "gemma4_4b_sft" / "final"
-MERGED_DIR = PROJECT_ROOT / "outputs" / "gemma4_4b_merged"
+DPO_ADAPTER = PROJECT_ROOT / "outputs" / "gemma4_4b_dpo" / "final"
 
-# GGUF output files
-GGUF_FP16_OUTPUT = MERGED_DIR / "gemma4-4b-kidsafe.gguf"
-GGUF_Q4_OUTPUT = MERGED_DIR / "gemma4-4b-kidsafe.Q4_K_M.gguf"
-GGUF_Q5_OUTPUT = MERGED_DIR / "gemma4-4b-kidsafe.Q5_K_M.gguf"
-GGUF_Q8_OUTPUT = MERGED_DIR / "gemma4-4b-kidsafe.Q8_0.gguf"
+# GGUF output files (directly in outputs, no temp merged dir)
+GGUF_FP16_OUTPUT = PROJECT_ROOT / "outputs" / "gemma4-4b-kidsafe.gguf"
+GGUF_Q4_OUTPUT = PROJECT_ROOT / "outputs" / "gemma4-4b-kidsafe.Q4_K_M.gguf"
+GGUF_Q5_OUTPUT = PROJECT_ROOT / "outputs" / "gemma4-4b-kidsafe.Q5_K_M.gguf"
+GGUF_Q8_OUTPUT = PROJECT_ROOT / "outputs" / "gemma4-4b-kidsafe.Q8_0.gguf"
 
 # llama.cpp source (has convert_hf_to_gguf.py)
 LLAMA_CPP_SRC_DIR = PROJECT_ROOT.parent / "llama-cpp-src"
@@ -44,92 +50,83 @@ QUANT_OPTIONS = {
 }
 
 
-def merge_adapter():
-    """Merge SFT adapter with base Gemma 4 model.
+def build_merged_model():
+    """Build fully merged model in memory: base + SFT + DPO.
 
-    Flow:
-        1. Load base gemma-4-E4B-it
-        2. Merge SFT adapter → model with child-friendly tone
-        3. Save final merged model
+    CRITICAL: Do NOT save to disk. 4-bit merge corrupts safetensors.
+    Returns (model, tokenizer) ready for GGUF conversion.
     """
     print("=" * 60)
-    print("  STEP 1: Merge SFT Adapter with Gemma 4 E4B")
+    print("  STEP 1: Build merged model (base + SFT + DPO)")
     print("=" * 60)
 
-    # Verify adapter exists
+    # Verify adapters exist
     if not SFT_ADAPTER.exists():
         print(f"ERROR: SFT adapter not found: {SFT_ADAPTER}")
-        print(f"  Make sure you ran gemma4_train.py first.")
+        print(f"  Run gemma4_train.py first.")
+        sys.exit(1)
+    if not DPO_ADAPTER.exists():
+        print(f"ERROR: DPO adapter not found: {DPO_ADAPTER}")
+        print(f"  Run gemma4_train_dpo.py first.")
         sys.exit(1)
 
     print(f"  Base:        {BASE_MODEL}")
     print(f"  SFT Adapter: {SFT_ADAPTER}")
-    print(f"  Output:      {MERGED_DIR}")
+    print(f"  DPO Adapter: {DPO_ADAPTER}")
 
-    # Check VRAM
     if torch.cuda.is_available():
         vram = torch.cuda.get_device_properties(0).total_memory / (1024**3)
         print(f"  GPU: {torch.cuda.get_device_name(0)} ({vram:.1f} GB)")
-    else:
-        print("  WARNING: No GPU detected - CPU will be very slow")
 
-    from transformers import AutoModelForCausalLM, AutoTokenizer
+    from unsloth import FastLanguageModel
     from peft import PeftModel
 
     # Step 1: Load base model
-    print("\n  [1/3] Loading base model...")
-    model = AutoModelForCausalLM.from_pretrained(
-        BASE_MODEL,
-        torch_dtype=torch.bfloat16,
-        device_map="auto",
+    print("\n  [1/4] Loading base model...")
+    model, tokenizer = FastLanguageModel.from_pretrained(
+        model_name=BASE_MODEL,
+        max_seq_length=1024,
+        dtype=None,
+        load_in_4bit=True,
     )
-    tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)
-    print("  Base model loaded.")
+    print(f"  Base loaded. VRAM: {torch.cuda.memory_allocated() / 1e9:.2f} GB")
 
-    # Step 2: Merge SFT adapter
-    print("\n  [2/3] Merging SFT adapter (child-friendly tone)...")
+    # Step 2: Apply SFT adapter as LoRA
+    print("\n  [2/4] Applying SFT adapter (child-friendly tone)...")
     model = PeftModel.from_pretrained(model, SFT_ADAPTER)
+    print("  SFT LoRA applied.")
+
+    # Step 3: Merge SFT LoRA into base (in-memory only)
+    print("  Merging SFT LoRA into base weights...")
     model = model.merge_and_unload()
-    print("  SFT adapter merged successfully.")
+    print("  SFT merged. VRAM: {0:.2f} GB".format(torch.cuda.memory_allocated() / 1e9))
 
-    # Step 3: Save final model
-    print(f"\n  [3/3] Saving merged model to {MERGED_DIR}...")
-    MERGED_DIR.mkdir(parents=True, exist_ok=True)
-    model.save_pretrained(MERGED_DIR)
-    tokenizer.save_pretrained(MERGED_DIR)
+    # Step 4: Apply DPO adapter as LoRA
+    print("\n  [3/4] Applying DPO adapter (safety alignment)...")
+    model = PeftModel.from_pretrained(model, DPO_ADAPTER)
+    print("  DPO LoRA applied.")
 
-    # Copy chat template from adapter
-    chat_template_src = SFT_ADAPTER / "chat_template.jinja"
-    if chat_template_src.exists():
-        import shutil
-        shutil.copy(chat_template_src, MERGED_DIR / "chat_template.jinja")
-        print(f"  Copied chat template from adapter")
-    else:
-        print(f"  WARNING: No chat_template.jinja found in adapter")
+    # Step 5: Merge DPO LoRA into base (in-memory only)
+    print("  Merging DPO LoRA into base weights...")
+    model = model.merge_and_unload()
+    print("  DPO merged. VRAM: {0:.2f} GB".format(torch.cuda.memory_allocated() / 1e9))
 
-    del model, tokenizer
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
+    # Get inner model for GGUF conversion
+    inner_model = model.model if hasattr(model, 'model') else model
 
-    total_size = sum(f.stat().st_size for f in MERGED_DIR.rglob('*') if f.is_file())
-    print(f"\n  Final model size: {total_size / (1024**3):.2f} GB")
-    print("  Merge complete!")
-    return MERGED_DIR
+    print("\n  [4/4] Model ready for GGUF conversion (in memory only)")
+    print("  NOTE: Not saving to disk — 4-bit merge corrupts safetensors")
+    return inner_model, tokenizer
 
 
-def convert_to_gguf_fp16(merged_dir: Path):
-    """Convert merged HF model to GGUF fp16 using convert_hf_to_gguf.py."""
+def convert_to_gguf_fp16(model, tokenizer):
+    """Convert in-memory model to GGUF fp16 using convert_hf_to_gguf.py."""
     print("\n" + "=" * 60)
     print("  STEP 2: Convert to GGUF fp16")
     print("=" * 60)
 
-    if not merged_dir.exists():
-        print(f"ERROR: Merged model not found: {merged_dir}")
-        sys.exit(1)
-
     if not LLAMA_CPP_SRC_DIR.exists():
         print(f"ERROR: llama.cpp source not found: {LLAMA_CPP_SRC_DIR}")
-        print(f"  Expected: {LLAMA_CPP_SRC_DIR / 'convert_hf_to_gguf.py'}")
         sys.exit(1)
 
     convert_script = LLAMA_CPP_SRC_DIR / "convert_hf_to_gguf.py"
@@ -137,19 +134,55 @@ def convert_to_gguf_fp16(merged_dir: Path):
         print(f"ERROR: convert_hf_to_gguf.py not found at: {convert_script}")
         sys.exit(1)
 
-    print(f"  Source: {LLAMA_CPP_SRC_DIR}")
-    print(f"  Input:  {merged_dir}")
+    # Save model to temp dir for conversion (convert needs filesystem access)
+    import tempfile
+    temp_dir = Path(tempfile.mkdtemp(prefix="gguf_convert_"))
+    print(f"  Temp dir: {temp_dir}")
+
+    # Save model and tokenizer to temp
+    model.save_pretrained(str(temp_dir), safe_serialization=True)
+    tokenizer.save_pretrained(str(temp_dir))
+
+    # Fix config.json if needed (Gemma 4 dimensions in text_config)
+    import json
+    config_path = temp_dir / "config.json"
+    if config_path.exists():
+        with open(config_path, 'r') as f:
+            cfg = json.load(f)
+        if 'text_config' in cfg and 'hidden_size' not in cfg:
+            tc = cfg['text_config']
+            for key in ['hidden_size', 'intermediate_size', 'num_hidden_layers',
+                        'num_attention_heads', 'num_key_value_heads', 'vocab_size',
+                        'max_position_embeddings', 'head_dim', 'rms_norm_eps',
+                        'hidden_activation', 'initializer_range', 'tie_word_embeddings',
+                        'bos_token_id', 'eos_token_id', 'pad_token_id',
+                        'sliding_window', 'use_cache', 'attention_dropout',
+                        'attention_bias', 'rope_parameters', 'final_logit_softcapping']:
+                if key in tc:
+                    cfg[key] = tc[key]
+            del cfg['text_config']
+            for key in ['unsloth_fixed', 'unsloth_version', 'model_name', 'dtype']:
+                cfg.pop(key, None)
+            with open(config_path, 'w') as f:
+                json.dump(cfg, f, indent=2)
+            print("  Fixed config.json dimensions")
+
+    print(f"  Input:  {temp_dir}")
     print(f"  Output: {GGUF_FP16_OUTPUT}")
 
     cmd = [
         sys.executable, str(convert_script),
-        str(merged_dir),
+        str(temp_dir),
         "--outfile", str(GGUF_FP16_OUTPUT),
         "--outtype", "f16",
     ]
 
     print(f"\n  Running conversion (this may take 5-10 min)...")
     result = subprocess.run(cmd, cwd=str(LLAMA_CPP_SRC_DIR))
+
+    # Cleanup temp dir
+    import shutil
+    shutil.rmtree(temp_dir, ignore_errors=True)
 
     if result.returncode != 0:
         print(f"  ERROR: Conversion failed (exit code {result.returncode})")
@@ -220,7 +253,7 @@ def _quantize(quant_name: str, output_path: Path):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Merge Gemma 4 SFT adapter and export to GGUF"
+        description="Merge Gemma 4 SFT + DPO adapters and export to GGUF"
     )
     parser.add_argument(
         "--step",
@@ -237,7 +270,7 @@ def main():
     args = parser.parse_args()
 
     print("\n" + "=" * 60)
-    print("  Gemma 4 E4B - Model Export Tool")
+    print("  Gemma 4 E4B - SFT + DPO to GGUF Export")
     print("=" * 60)
     print(f"  Project: {PROJECT_ROOT}")
     print(f"  Source:  {LLAMA_CPP_SRC_DIR}")
@@ -245,12 +278,13 @@ def main():
     print()
 
     if args.step in ("merge", "all"):
-        merged_dir = merge_adapter()
+        model, tokenizer = build_merged_model()
     else:
-        merged_dir = MERGED_DIR
+        print("ERROR: --step merge is required before convert")
+        sys.exit(1)
 
     if args.step in ("convert", "all"):
-        convert_to_gguf_fp16(merged_dir)
+        convert_to_gguf_fp16(model, tokenizer)
 
     if args.step in ("quantize", "all"):
         if args.quant in ("q4_k_m", "all"):
@@ -280,3 +314,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

@@ -1,0 +1,107 @@
+# =============================================================================
+# GEMMA 4 E4B - Configuración de DPO (Direct Preference Optimization)
+# Modelo: unsloth/gemma-4-E4B-it (fine-tuned con SFT)
+# Hardware: NVIDIA RTX 5080 (16GB VRAM)
+# Técnica: QLoRA 4-bit + TRL DPOTrainer
+#
+# PIPELINE:
+#   SFT (gemma4_train.py) → Modelo SFT (HuggingFace)
+#   → DPO (este script) → Modelo DPO (HuggingFace)
+#   → Exportar a GGUF (gemma4_export.py)
+#
+# NOTA: El DPO se entrena sobre el modelo SFT en formato HuggingFace,
+#       NO sobre el GGUF. El GGUF es solo para inferencia.
+# =============================================================================
+
+# --- Modelo Base (SFT) ---
+model:
+  name_or_path: "./outputs/gemma4_4b_sft/final"
+  # CAMBIA esta ruta si tu modelo SFT está en otro lugar
+  # Puede ser:
+  #   - Ruta local: "./outputs/gemma4_4b_sft/final"
+  #   - Hugging Face: "hbvargas87/gemma4-kidsafe-sft"
+  quantization_config:
+    load_in_4bit: true
+    bnb_4bit_quant_type: "nf4"
+    bnb_4bit_compute_dtype: "float16"
+    bnb_4bit_use_double_quant: true
+
+# --- Dataset DPO ---
+dataset:
+  path: "./data/dpo/dpo_dataset.jsonl"
+  # Formato esperado:
+  #   prompt: string (pregunta del usuario)
+  #   chosen: string (respuesta preferida/segura)
+  #   rejected: string (respuesta no deseada/peligrosa)
+  #   system: string (mensaje del sistema)
+  format: "conversational"
+
+# --- Chat Template ---
+chat_template:
+  template: "gemma-4"
+  enable_thinking: false
+
+# --- Parámetros de Entrenamiento (DPO) ---
+training:
+  # Parámetros generales
+  output_dir: "./outputs/gemma4_4b_dpo"
+  num_train_epochs: 3
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 8       # Batch efectivo: 1 x 8 = 8
+  learning_rate: 5.0e-5                # DPO usa learning rate más bajo que SFT
+  lr_scheduler_type: "cosine"
+  warmup_ratio: 0.03
+  weight_decay: 0.001
+  max_grad_norm: 0.3
+  bf16: true
+  dataloader_num_workers: 0            # 0 workers (evita problemas de pickle)
+  seed: 3407
+  gradient_checkpointing: false        # Desactivado para velocidad
+  max_seq_length: 1024
+
+  # Logging y guardado
+  logging_steps: 10
+  save_steps: 50
+  save_total_limit: 3
+  eval_strategy: "no"
+
+  # Parámetros de LoRA para DPO
+  # Rank más bajo que SFT para evitar overfitting en dataset pequeño (200 pares)
+  lora:
+    r: 8                              # Rank bajo para DPO (evita overfitting)
+    lora_alpha: 8                     # alpha == r recomendado
+    lora_dropout: 0
+    target_modules: "all-linear"
+    task_type: "CAUSAL_LM"
+
+  # Parámetros específicos de DPO
+  dpo_beta: 0.1                      # Temperatura de la función de preferencia
+  # beta alto (>0.5) = comportamiento más conservador (cercano al modelo SFT)
+  # beta bajo (<0.1) = comportamiento más agresivo (se aleja del modelo SFT)
+  # beta=0.1 es el valor estándar recomendado
+
+# --- Notas Importantes ---
+notes:
+  # DPO no tiene el mismo problema de loss alto que SFT
+  # Loss DPO típico: 0.5-1.5 (no 13-15 como SFT)
+  loss_normal_range: "0.5-1.5"
+  
+  # VRAM estimado: ~10-12 GB con QLoRA 4-bit (r=8)
+  # El modelo SFT ya está cuantizado a 4-bit
+  vram_estimated: "10-12 GB"
+  
+  # Dataset DPO: 200 pares (10 categorías x 20 pares)
+  # Con 3 epochs y batch_size=1, son ~1,800 steps
+  dataset_size: 200
+  estimated_steps: 1800
+  estimated_time: "~1-2 horas"
+
+# --- Inferencia (Post-Entrenamiento) ---
+inference:
+  generation:
+    max_new_tokens: 512
+    temperature: 1.0
+    top_p: 0.95
+    top_k: 64
+    do_sample: true
+    use_cache: true  # CRÍTICO para E2B/E4B
